@@ -33,17 +33,28 @@ if ([string]::IsNullOrWhiteSpace($changeText)) {
     $changeText = 'No changelog entries recorded for this tag.'
 }
 
-$priorTag = ''
-Push-Location $RepoRoot
-try {
-    $described = & git describe --tags --abbrev=0 "$Tag^" 2>$null
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($described)) {
-        $priorTag = ([string]$described).Trim()
+# A first release has no prior tag, so this probe is expected to fail. Keep the failure soft and
+# clear the exit code, or the workflow step inherits it and fails after the notes are written.
+function Get-PriorTag {
+    param([string] $Tag, [string] $RepoRoot)
+
+    $ErrorActionPreference = 'Continue'
+    Push-Location $RepoRoot
+    try {
+        $described = & git describe --tags --abbrev=0 "$Tag^" 2>$null
+        $found = $LASTEXITCODE -eq 0
+        $global:LASTEXITCODE = 0
+        if ($found -and -not [string]::IsNullOrWhiteSpace($described)) {
+            return ([string]$described).Trim()
+        }
+        return ''
+    }
+    finally {
+        Pop-Location
     }
 }
-finally {
-    Pop-Location
-}
+
+$priorTag = Get-PriorTag -Tag $Tag -RepoRoot $RepoRoot
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("MultiWindowShare $version") | Out-Null
