@@ -1,0 +1,189 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: changelog-append
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect prerelease tag
+        id: prerelease
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $isPrerelease = $tag -match '^v\d{4}\.\d+\.\d+\.\d+-.+$'
+          "is_prerelease=$($isPrerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-release-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-release-${{ runner.os }}-
+
+      - name: Validate workflow scripts
+        shell: pwsh
+        run: |
+          ./.github/scripts/Test-WorkflowSyntax.ps1
+          ./.github/scripts/Test-UpdateChangelog.ps1
+          ./.github/scripts/Test-GenerateReleaseNotes.ps1
+          ./.github/scripts/Test-ReleaseVersionSequence.ps1
+
+      - name: Validate release version sequence
+        shell: pwsh
+        run: ./.github/scripts/Assert-ReleaseVersionSequence.ps1 -Tag '${{ github.ref_name }}'
+
+      - name: Promote Unreleased to tagged section
+        shell: pwsh
+        run: |
+          ./.github/scripts/Update-Changelog.ps1 -Mode Promote -Version '${{ github.ref_name }}'
+          New-Item -ItemType Directory -Force -Path .changelog-stash | Out-Null
+          Copy-Item CHANGELOG.md .changelog-stash/CHANGELOG.md -Force
+
+      - name: Build release assets
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}' -replace '^v', ''
+          ./build.ps1 -Version $version -Release
+
+      - name: Write integrity manifest
+        id: assets
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $zip = Get-ChildItem release -File -Filter '*.zip' | Select-Object -First 1
+          if (-not $zip) { throw "Expected a zip release asset under release/." }
+
+          $integrityName = "MultiWindowShare-$tag.integrity.tsv"
+          $integrityPath = Join-Path "release" $integrityName
+          "name`tsha256`tbytes" | Set-Content -LiteralPath $integrityPath -Encoding utf8
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip.FullName).Hash.ToLowerInvariant()
+          "$($zip.Name)`t$hash`t$($zip.Length)" | Add-Content -LiteralPath $integrityPath -Encoding utf8
+
+          "zip_name=$($zip.Name)" >> $env:GITHUB_OUTPUT
+          "integrity_name=$integrityName" >> $env:GITHUB_OUTPUT
+          "integrity_path=$integrityPath" >> $env:GITHUB_OUTPUT
+
+      - name: Write release notes
+        shell: pwsh
+        run: |
+          ./.github/scripts/Generate-ReleaseNotes.ps1 `
+            -Tag '${{ github.ref_name }}' `
+            -Repo '${{ github.repository }}' `
+            -ZipName '${{ steps.assets.outputs.zip_name }}' `
+            -IntegrityName '${{ steps.assets.outputs.integrity_name }}' |
+            Set-Content -Path release/notes.md -Encoding utf8
+          if (-not (Test-Path release/notes.md) -or (Get-Item release/notes.md).Length -eq 0) {
+            throw "Release notes were not generated."
+          }
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $assets = @(
+            (Get-Item -LiteralPath "release/${{ steps.assets.outputs.zip_name }}").FullName,
+            (Get-Item -LiteralPath "${{ steps.assets.outputs.integrity_path }}").FullName
+          )
+          $existing = gh release view $tag --json id 2>$null
+          if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existing)) {
+            gh release delete $tag --yes
+            if ($LASTEXITCODE -ne 0) { throw "Could not delete existing release $tag" }
+          }
+
+          $ghArgs = @("release", "create", $tag, "--title", $tag, "--notes-file", "release/notes.md")
+          if ('${{ steps.prerelease.outputs.is_prerelease }}' -eq 'true') {
+            $ghArgs += "--prerelease"
+          }
+          $ghArgs += $assets
+          gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+
+      - name: Push promoted changelog back to main
+        if: ${{ steps.prerelease.outputs.is_prerelease != 'true' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          git fetch origin main
+          $currentPath = Join-Path $env:RUNNER_TEMP "CHANGELOG-main.md"
+          $updatedPath = ".changelog-stash/CHANGELOG.md"
+          git show origin/main:CHANGELOG.md | Set-Content -LiteralPath $currentPath -Encoding utf8
+
+          $currentBytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $currentPath).Path)
+          $updatedBytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $updatedPath).Path)
+          if ([Convert]::ToBase64String($currentBytes) -eq [Convert]::ToBase64String($updatedBytes)) {
+            Write-Host "CHANGELOG.md already promoted on main."
+            return
+          }
+
+          $expectedOid = (& git rev-parse origin/main).Trim()
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          $payloadPath = Join-Path $env:RUNNER_TEMP "changelog-promote-payload.json"
+          $payload = @{
+            query = "mutation(`$input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: `$input) { commit { oid url } } }"
+            variables = @{
+              input = @{
+                branch = @{
+                  repositoryNameWithOwner = $env:GITHUB_REPOSITORY
+                  branchName = "main"
+                }
+                message = @{
+                  headline = "docs(changelog): promote Unreleased to $env:TAG_NAME [skip changelog]"
+                  body = "Promoted after publishing $env:TAG_NAME."
+                }
+                fileChanges = @{
+                  additions = @(
+                    @{
+                      path = "CHANGELOG.md"
+                      contents = [Convert]::ToBase64String($updatedBytes)
+                    }
+                  )
+                }
+                expectedHeadOid = $expectedOid
+              }
+            }
+          } | ConvertTo-Json -Depth 12
+          [System.IO.File]::WriteAllText($payloadPath, $payload, $utf8NoBom)
+
+          $response = & gh api graphql --input $payloadPath
+          if ($LASTEXITCODE -ne 0) { throw "createCommitOnBranch failed." }
+          $result = $response | ConvertFrom-Json
+          if ($result.errors) {
+            throw "createCommitOnBranch returned GraphQL errors: $($result.errors | ConvertTo-Json -Compress)"
+          }
+          $newOid = [string]$result.data.createCommitOnBranch.commit.oid
+          if ([string]::IsNullOrWhiteSpace($newOid)) {
+            throw "createCommitOnBranch did not return a commit oid."
+          }
+          Write-Host "Promoted CHANGELOG.md on main: $newOid"

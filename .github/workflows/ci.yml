@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint (changed)
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-lint-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-lint-${{ runner.os }}-
+
+      - name: Run changed lint check
+        shell: pwsh
+        run: |
+          $base = '${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}'
+          if ([string]::IsNullOrWhiteSpace($base) -or $base -match '^0+$') {
+            $base = 'origin/main'
+          }
+          .\lint.ps1 -Check -ChangedOnly -ChangedBase $base
+
+  build:
+    name: build, tests, and publish smoke
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Validate workflow scripts
+        shell: pwsh
+        run: |
+          ./.github/scripts/Test-WorkflowSyntax.ps1
+          ./.github/scripts/Test-UpdateChangelog.ps1
+          ./.github/scripts/Test-GenerateReleaseNotes.ps1
+          ./.github/scripts/Test-ReleaseVersionSequence.ps1
+
+      - name: Restore
+        run: dotnet restore MultiWindowShare.slnx
+
+      - name: Build
+        run: dotnet build MultiWindowShare.slnx --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test MultiWindowShare.slnx --configuration Release --no-build
+
+      - name: Publish app
+        shell: pwsh
+        run: |
+          dotnet publish src/MultiWindowShare/MultiWindowShare.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            --output stage/app `
+            -p:PublishSingleFile=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishReadyToRun=false `
+            -p:DebugType=None `
+            -p:DebugSymbols=false
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit $LASTEXITCODE" }
+          $files = @(Get-ChildItem stage/app -File)
+          if ($files.Count -ne 1 -or $files[0].Name -ne 'MultiWindowShare.exe') {
+            throw 'Publish output must contain exactly MultiWindowShare.exe.'
+          }
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: MultiWindowShare-${{ github.sha }}
+          path: stage/app
+          if-no-files-found: error
+          retention-days: 14
