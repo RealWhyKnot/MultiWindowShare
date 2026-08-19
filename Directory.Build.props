@@ -1,0 +1,21 @@
+<Project>
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Product>MultiWindowShare</Product>
+    <Authors>RealWhyKnot</Authors>
+    <Company>RealWhyKnot</Company>
+    <Copyright>Copyright (c) 2026 RealWhyKnot</Copyright>
+    <Description>Share several application windows through Discord as one screenshare, and send their audio to viewers without hearing it yourself.</Description>
+    <RepositoryUrl>https://github.com/RealWhyKnot/MultiWindowShare</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+
+</Project>

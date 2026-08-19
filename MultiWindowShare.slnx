@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/MultiWindowShare.Core/MultiWindowShare.Core.csproj" />
+  <Project Path="src/MultiWindowShare/MultiWindowShare.csproj" />
+  <Project Path="tests/MultiWindowShare.Tests/MultiWindowShare.Tests.csproj" />
+  <Project Path="spikes/P0EndpointSpike/P0EndpointSpike.csproj" />
+</Solution>
