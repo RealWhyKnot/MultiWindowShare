@@ -123,6 +123,7 @@ if ($Mode -eq 'Append') {
     }
 
     $lines = & git -C $RepoRoot log --no-merges --format='%H%x09%s' $Range
+    $newCount = 0
     foreach ($line in $lines) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         $parts = $line -split "`t", 2
@@ -130,26 +131,44 @@ if ($Mode -eq 'Append') {
         $entry = Convert-SubjectToEntry -Sha $parts[0] -Subject $parts[1]
         if ($null -ne $entry) {
             $entriesByBucket[$entry.Bucket].Add($entry.Bullet) | Out-Null
+            $newCount++
+        }
+    }
+
+    if ($newCount -eq 0) {
+        Write-Host 'No changelog entries produced.'
+        exit 0
+    }
+
+    # Fold what Unreleased already holds into the new entries so each bucket keeps one heading.
+    $current = $null
+    foreach ($line in ((Get-UnreleasedBody -Content $content) -split "`r?`n")) {
+        if ($line -match '^###\s+(?<name>.+?)\s*$') {
+            $current = $Matches['name']
+            if (-not $entriesByBucket.Contains($current)) {
+                $entriesByBucket[$current] = New-Object System.Collections.Generic.List[string]
+            }
+            continue
+        }
+        if ($current -and $line -match '^- ' -and -not $entriesByBucket[$current].Contains($line)) {
+            $entriesByBucket[$current].Add($line) | Out-Null
         }
     }
 
     $newBodyLines = New-Object System.Collections.Generic.List[string]
-    foreach ($bucket in $entriesByBucket.Keys) {
-        if ($entriesByBucket[$bucket].Count -eq 0) { continue }
-        $newBodyLines.Add("### $bucket") | Out-Null
-        foreach ($bullet in $entriesByBucket[$bucket]) {
+    foreach ($name in @($entriesByBucket.Keys)) {
+        if ($entriesByBucket[$name].Count -eq 0) { continue }
+        $newBodyLines.Add("### $name") | Out-Null
+        foreach ($bullet in $entriesByBucket[$name]) {
             $newBodyLines.Add($bullet) | Out-Null
         }
         $newBodyLines.Add('') | Out-Null
     }
 
-    if ($newBodyLines.Count -eq 0) {
-        Write-Host 'No changelog entries produced.'
-        exit 0
-    }
-
     $newBody = (($newBodyLines -join "`n").TrimEnd()) + "`n`n"
-    $updated = [regex]::Replace($content, '(?ms)^## Unreleased\s*', "## Unreleased`n`n$newBody", 1)
+    # Index surgery, not [regex]::Replace: a bullet containing $ would be read as a substitution.
+    $section = [regex]::Match($content, '(?ms)^## Unreleased\s*(?<body>.*?)(?=^---|\z)')
+    $updated = $content.Substring(0, $section.Index) + "## Unreleased`n`n$newBody" + $content.Substring($section.Index + $section.Length)
     Write-TextUtf8 -Path $ChangelogPath -Content $updated
     exit 0
 }
