@@ -11,4 +11,7 @@
 - **app:** Group source files by folder and namespace (960b8bf)
 - Bump xunit.runner.visualstudio from 3.0.2 to 4.0.0 (8c98f66)
 
+### Fixed
+- **changelog:** Merge appended entries into their existing sections (af874ab)
+
 ---
