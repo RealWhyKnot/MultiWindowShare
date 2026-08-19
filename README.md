@@ -1,5 +1,7 @@
 # MultiWindowShare
 
+<img src=".github/images/logo.png" alt="" width="128" align="right">
+
 Share several application windows through Discord as one screenshare, and send their audio to viewers without hearing it yourself.
 
 Discord only lets you share one window at a time, and "share with sound" only carries the audio of that one window's process. MultiWindowShare works around both limits. It captures each window you pick with Windows.Graphics.Capture, tiles them onto a single window, and you share that one window in Discord. For audio it captures each source app's output with per-process WASAPI loopback, mixes it, and re-plays the mix from its own process, so Discord's per-process sound capture picks up the whole mix.

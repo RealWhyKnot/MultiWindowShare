@@ -7,7 +7,12 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>MultiWindowShare</AssemblyName>
     <RootNamespace>MultiWindowShare</RootNamespace>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\AppIcon.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\MultiWindowShare.Core\MultiWindowShare.Core.csproj" />

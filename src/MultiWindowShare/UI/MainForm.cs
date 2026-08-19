@@ -15,6 +15,7 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Text = "MultiWindowShare";
+        Icon = AppIcon.Value;
         ClientSize = new System.Drawing.Size(560, 460);
         StartPosition = FormStartPosition.CenterScreen;
 

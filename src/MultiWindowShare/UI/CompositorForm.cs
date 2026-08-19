@@ -21,6 +21,7 @@ internal sealed class CompositorForm : Form
         _canvasHeight = canvasHeight;
 
         Text = "MultiWindowShare Output";
+        Icon = AppIcon.Value;
         ClientSize = new System.Drawing.Size(canvasWidth / 2, canvasHeight / 2);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = System.Drawing.Color.Black;
