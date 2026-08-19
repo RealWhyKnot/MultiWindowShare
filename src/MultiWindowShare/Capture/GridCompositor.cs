@@ -8,8 +8,11 @@ using Windows.Graphics.DirectX.Direct3D11;
 
 namespace MultiWindowShare.Capture;
 
+internal readonly record struct SourceStatus(string Title, int Width, int Height, bool HasFrame, int FramesArrived, string? LastError);
+
 // Draws every captured window into one swap chain as a grid. Each tile is a full-viewport triangle
-// sampling that window's texture, so scaling is free and no vertex buffer is needed.
+// sampling that window's texture, so scaling is free and no vertex buffer is needed. Sources can be
+// added and removed while rendering runs, and the swap chain follows the output window's size.
 internal sealed class GridCompositor : IDisposable
 {
     private const string Hlsl = """
@@ -33,16 +36,27 @@ internal sealed class GridCompositor : IDisposable
         }
         """;
 
+    private const int SwapChainBufferCount = 2;
+    // Present(1) ties the frame rate to the monitor refresh; it doubles as the frame limiter.
+    private const uint PresentSyncInterval = 1;
+    private static readonly Color4 Background = new(0f, 0f, 0f, 1f);
+
     private readonly object _contextLock = new();
     private readonly List<WindowCapture> _sources = [];
     private readonly ID3D11Device _device;
     private readonly ID3D11DeviceContext _context;
     private readonly IDirect3DDevice _winRtDevice;
     private readonly IDXGISwapChain1 _swapChain;
-    private readonly ID3D11RenderTargetView _renderTarget;
     private readonly ID3D11VertexShader _vertexShader;
     private readonly ID3D11PixelShader _pixelShader;
     private readonly ID3D11SamplerState _sampler;
+
+    private ID3D11RenderTargetView _renderTarget;
+    private long _pendingSize;
+    private SourceSize[] _lastSizes = [];
+    private int _lastCanvasWidth;
+    private int _lastCanvasHeight;
+    private IReadOnlyList<Tile> _tiles = [];
 
     public GridCompositor(IntPtr hwnd, int width, int height)
     {
@@ -67,7 +81,7 @@ internal sealed class GridCompositor : IDisposable
             Width = (uint)width,
             Height = (uint)height,
             Format = Format.B8G8R8A8_UNorm,
-            BufferCount = 2,
+            BufferCount = SwapChainBufferCount,
             BufferUsage = Usage.RenderTargetOutput,
             SwapEffect = SwapEffect.FlipDiscard,
             SampleDescription = new SampleDescription(1, 0),
@@ -95,42 +109,69 @@ internal sealed class GridCompositor : IDisposable
         });
     }
 
-    public int Width { get; }
+    public int Width { get; private set; }
 
-    public int Height { get; }
+    public int Height { get; private set; }
+
+    // Raised on a WinRT thread after a source whose window closed has been removed.
+    public event Action<IntPtr>? SourceClosed;
 
     public void AddSource(IntPtr hwnd, string title)
     {
-        var capture = new WindowCapture(hwnd, title, _device, _context, _contextLock, _winRtDevice);
+        var capture = new WindowCapture(hwnd, title, _device, _context, _contextLock, _winRtDevice, OnSourceClosed);
         lock (_contextLock)
         {
             _sources.Add(capture);
         }
     }
 
-    // Prints each source's captured resolution and returns how many have produced a frame.
-    public int ReportSourceSizes()
+    public void RemoveSource(IntPtr hwnd)
     {
         lock (_contextLock)
         {
-            int live = 0;
-            foreach (WindowCapture source in _sources)
+            for (int i = 0; i < _sources.Count; i++)
             {
-                bool has = source.View is not null;
-                string state = has ? $"{source.Width}x{source.Height}" : "no texture";
-                Console.WriteLine($"  {state}  arrived={source.FramesArrived}  {source.Title}");
-                if (source.LastError is not null)
+                if (_sources[i].Hwnd == hwnd)
                 {
-                    Console.WriteLine($"        error: {source.LastError}");
-                }
-
-                if (has)
-                {
-                    live++;
+                    WindowCapture capture = _sources[i];
+                    _sources.RemoveAt(i);
+                    capture.Dispose();
+                    return;
                 }
             }
+        }
+    }
 
-            return live;
+    private void OnSourceClosed(WindowCapture capture)
+    {
+        RemoveSource(capture.Hwnd);
+        SourceClosed?.Invoke(capture.Hwnd);
+    }
+
+    // Safe from any thread; the resize itself happens on the render thread so it can never race
+    // Present. Rapid size changes coalesce to the newest one.
+    public void QueueResize(int width, int height)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        Interlocked.Exchange(ref _pendingSize, ((long)width << 32) | (uint)height);
+    }
+
+    public IReadOnlyList<SourceStatus> SourceStatuses()
+    {
+        lock (_contextLock)
+        {
+            var statuses = new SourceStatus[_sources.Count];
+            for (int i = 0; i < _sources.Count; i++)
+            {
+                WindowCapture s = _sources[i];
+                statuses[i] = new SourceStatus(s.Title, s.Width, s.Height, s.View is not null, s.FramesArrived, s.LastError);
+            }
+
+            return statuses;
         }
     }
 
@@ -138,14 +179,16 @@ internal sealed class GridCompositor : IDisposable
     {
         lock (_contextLock)
         {
+            ApplyPendingResize();
+
             _context.OMSetRenderTargets(_renderTarget);
-            _context.ClearRenderTargetView(_renderTarget, new Color4(0f, 0f, 0f, 1f));
+            _context.ClearRenderTargetView(_renderTarget, Background);
             _context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
             _context.VSSetShader(_vertexShader);
             _context.PSSetShader(_pixelShader);
             _context.PSSetSampler(0, _sampler);
 
-            IReadOnlyList<Tile> tiles = GridLayout.Compute(_sources.Count, Width, Height);
+            IReadOnlyList<Tile> tiles = CurrentTiles();
             for (int i = 0; i < _sources.Count; i++)
             {
                 WindowCapture source = _sources[i];
@@ -154,14 +197,66 @@ internal sealed class GridCompositor : IDisposable
                     continue;
                 }
 
-                Tile tile = GridLayout.Fit(tiles[i], source.Width, source.Height);
+                Tile tile = tiles[i];
                 _context.RSSetViewport(tile.X, tile.Y, tile.Width, tile.Height);
                 _context.PSSetShaderResource(0, source.View);
                 _context.Draw(3, 0);
             }
         }
 
-        _swapChain.Present(1, PresentFlags.None);
+        _swapChain.Present(PresentSyncInterval, PresentFlags.None);
+    }
+
+    private void ApplyPendingResize()
+    {
+        long pending = Interlocked.Exchange(ref _pendingSize, 0);
+        if (pending == 0)
+        {
+            return;
+        }
+
+        int width = (int)(pending >> 32);
+        int height = (int)pending;
+        if (width == Width && height == Height)
+        {
+            return;
+        }
+
+        // Flip-model ResizeBuffers refuses while any backbuffer reference is alive.
+        _context.UnsetRenderTargets();
+        _renderTarget.Dispose();
+        _swapChain.ResizeBuffers(0, (uint)width, (uint)height, Format.Unknown, SwapChainFlags.None).CheckError();
+        using ID3D11Texture2D backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
+        _renderTarget = _device.CreateRenderTargetView(backBuffer);
+        Width = width;
+        Height = height;
+    }
+
+    // Layout is pure and deterministic, so it only needs recomputing when a source size or the
+    // canvas actually changed; steady state reuses the cached tiles.
+    private IReadOnlyList<Tile> CurrentTiles()
+    {
+        bool changed = _sources.Count != _lastSizes.Length || Width != _lastCanvasWidth || Height != _lastCanvasHeight;
+        for (int i = 0; !changed && i < _sources.Count; i++)
+        {
+            changed = _lastSizes[i].Width != _sources[i].Width || _lastSizes[i].Height != _sources[i].Height;
+        }
+
+        if (changed)
+        {
+            var sizes = new SourceSize[_sources.Count];
+            for (int i = 0; i < _sources.Count; i++)
+            {
+                sizes[i] = new SourceSize(_sources[i].Width, _sources[i].Height);
+            }
+
+            _tiles = GridLayout.Compute(sizes, Width, Height);
+            _lastSizes = sizes;
+            _lastCanvasWidth = Width;
+            _lastCanvasHeight = Height;
+        }
+
+        return _tiles;
     }
 
     public void Dispose()

@@ -1,4 +1,5 @@
 using Vortice.Direct3D11;
+using Vortice.Mathematics;
 using Windows.Graphics;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
@@ -11,6 +12,9 @@ namespace MultiWindowShare.Capture;
 // device-context lock, since an ID3D11DeviceContext cannot be used concurrently.
 internal sealed class WindowCapture : IDisposable
 {
+    private const DirectXPixelFormat PoolFormat = DirectXPixelFormat.B8G8R8A8UIntNormalized;
+    private const int PoolBufferCount = 2;
+
     private readonly ID3D11Device _device;
     private readonly ID3D11DeviceContext _context;
     private readonly object _contextLock;
@@ -18,6 +22,7 @@ internal sealed class WindowCapture : IDisposable
     private readonly Direct3D11CaptureFramePool _pool;
     private readonly GraphicsCaptureSession _session;
     private readonly IDirect3DDevice _winRtDevice;
+    private readonly Action<WindowCapture>? _onClosed;
 
     private ID3D11Texture2D? _latest;
     private ID3D11ShaderResourceView? _view;
@@ -31,19 +36,23 @@ internal sealed class WindowCapture : IDisposable
         ID3D11Device device,
         ID3D11DeviceContext context,
         object contextLock,
-        IDirect3DDevice winRtDevice)
+        IDirect3DDevice winRtDevice,
+        Action<WindowCapture>? onClosed = null)
     {
+        Hwnd = hwnd;
         Title = title;
         _device = device;
         _context = context;
         _contextLock = contextLock;
         _winRtDevice = winRtDevice;
+        _onClosed = onClosed;
 
         _item = CaptureInterop.CreateForWindow(hwnd);
+        _item.Closed += OnItemClosed;
         _pool = Direct3D11CaptureFramePool.CreateFreeThreaded(
             winRtDevice,
-            DirectXPixelFormat.B8G8R8A8UIntNormalized,
-            2,
+            PoolFormat,
+            PoolBufferCount,
             _item.Size);
         _pool.FrameArrived += OnFrameArrived;
 
@@ -51,6 +60,8 @@ internal sealed class WindowCapture : IDisposable
         TrySetBorderless(_session);
         _session.StartCapture();
     }
+
+    public IntPtr Hwnd { get; }
 
     public string Title { get; }
 
@@ -79,6 +90,11 @@ internal sealed class WindowCapture : IDisposable
         }
     }
 
+    private void OnItemClosed(GraphicsCaptureItem sender, object args)
+    {
+        _onClosed?.Invoke(this);
+    }
+
     private void ProcessFrame(Direct3D11CaptureFramePool sender)
     {
         using Direct3D11CaptureFrame? frame = sender.TryGetNextFrame();
@@ -99,11 +115,18 @@ internal sealed class WindowCapture : IDisposable
             using ID3D11Texture2D source = Direct3D11Interop.GetTexture(frame.Surface);
             Texture2DDescription desc = source.Description;
 
-            if (_latest is null || Width != desc.Width || Height != desc.Height)
+            // The pool surface keeps its old dimensions for a frame after the window resizes, so
+            // only the content region is copied; the padding is stale pixels at the wrong aspect.
+            int width = Math.Clamp(size.Width, 1, (int)desc.Width);
+            int height = Math.Clamp(size.Height, 1, (int)desc.Height);
+
+            if (_latest is null || Width != width || Height != height)
             {
                 _view?.Dispose();
                 _latest?.Dispose();
 
+                desc.Width = (uint)width;
+                desc.Height = (uint)height;
                 desc.BindFlags = BindFlags.ShaderResource;
                 desc.Usage = ResourceUsage.Default;
                 desc.CPUAccessFlags = CpuAccessFlags.None;
@@ -111,17 +134,17 @@ internal sealed class WindowCapture : IDisposable
 
                 _latest = _device.CreateTexture2D(desc);
                 _view = _device.CreateShaderResourceView(_latest);
-                Width = (int)desc.Width;
-                Height = (int)desc.Height;
+                Width = width;
+                Height = height;
             }
 
-            _context.CopyResource(_latest, source);
+            _context.CopySubresourceRegion(_latest, 0, 0, 0, 0, source, 0, new Box(0, 0, 0, width, height, 1));
         }
 
         // A resized window keeps producing frames at the old pool size until the pool is told.
         if (size.Width > 0 && size.Height > 0 && (size.Width != _item.Size.Width || size.Height != _item.Size.Height))
         {
-            _pool.Recreate(_winRtDevice, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
+            _pool.Recreate(_winRtDevice, PoolFormat, PoolBufferCount, size);
         }
     }
 
@@ -154,6 +177,7 @@ internal sealed class WindowCapture : IDisposable
             }
 
             _disposed = true;
+            _item.Closed -= OnItemClosed;
             _pool.FrameArrived -= OnFrameArrived;
             _session.Dispose();
             _pool.Dispose();

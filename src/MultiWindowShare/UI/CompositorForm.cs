@@ -7,9 +7,11 @@ namespace MultiWindowShare.UI;
 // cannot stall the grid.
 internal sealed class CompositorForm : Form
 {
+    private const int MaxConsecutiveRenderFailures = 50;
+    private const int RenderRetryDelayMs = 100;
+    private const int CloseJoinTimeoutMs = 5000;
+
     private readonly IReadOnlyList<CaptureTarget> _targets;
-    private readonly int _canvasWidth;
-    private readonly int _canvasHeight;
     private GridCompositor? _compositor;
     private Thread? _renderThread;
     private volatile bool _running;
@@ -17,8 +19,6 @@ internal sealed class CompositorForm : Form
     public CompositorForm(IReadOnlyList<CaptureTarget> targets, int canvasWidth, int canvasHeight)
     {
         _targets = targets;
-        _canvasWidth = canvasWidth;
-        _canvasHeight = canvasHeight;
 
         Text = "MultiWindowShare Output";
         Icon = AppIcon.Value;
@@ -27,17 +27,29 @@ internal sealed class CompositorForm : Form
         BackColor = System.Drawing.Color.Black;
     }
 
+    // Raised on the UI thread after a shared window closed and its tile was dropped.
+    public event Action<IntPtr>? SourceClosed;
+
+    public void AddSource(CaptureTarget target)
+    {
+        _compositor?.AddSource(target.Handle, target.Title);
+    }
+
+    public void RemoveSource(IntPtr hwnd)
+    {
+        _compositor?.RemoveSource(hwnd);
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
 
         try
         {
-            _compositor = new GridCompositor(Handle, _canvasWidth, _canvasHeight);
-            foreach (CaptureTarget target in _targets)
-            {
-                _compositor.AddSource(target.Handle, target.Title);
-            }
+            // The swap chain matches the window's on-screen size: screen sharing captures rendered
+            // pixels, so a larger fixed backbuffer would only be scaled down by DWM anyway.
+            _compositor = new GridCompositor(Handle, ClientSize.Width, ClientSize.Height);
+            _compositor.SourceClosed += OnCompositorSourceClosed;
         }
         catch (Exception ex)
         {
@@ -47,9 +59,52 @@ internal sealed class CompositorForm : Form
             return;
         }
 
+        // A window that died since it was picked should not take the whole session down with it.
+        List<string> failed = [];
+        foreach (CaptureTarget target in _targets)
+        {
+            try
+            {
+                _compositor.AddSource(target.Handle, target.Title);
+            }
+            catch (Exception ex)
+            {
+                failed.Add($"{target.Title}: {ex.Message}");
+                SourceClosed?.Invoke(target.Handle);
+            }
+        }
+
+        if (failed.Count > 0)
+        {
+            MessageBox.Show(this, $"Could not capture:\n{string.Join('\n', failed)}", "MultiWindowShare",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
         _running = true;
         _renderThread = new Thread(RenderLoop) { IsBackground = true, Name = "compositor-render" };
         _renderThread.Start();
+    }
+
+    protected override void OnClientSizeChanged(EventArgs e)
+    {
+        base.OnClientSizeChanged(e);
+        if (WindowState != FormWindowState.Minimized)
+        {
+            _compositor?.QueueResize(ClientSize.Width, ClientSize.Height);
+        }
+    }
+
+    // Arrives on a WinRT thread; forwarded to the UI thread so MainForm can update the picker.
+    private void OnCompositorSourceClosed(IntPtr hwnd)
+    {
+        try
+        {
+            BeginInvoke(() => SourceClosed?.Invoke(hwnd));
+        }
+        catch (InvalidOperationException)
+        {
+            // The form is closing; nobody needs the notification.
+        }
     }
 
     private void RenderLoop()
@@ -65,13 +120,13 @@ internal sealed class CompositorForm : Form
             catch (Exception ex)
             {
                 // Transient device errors recover; five seconds of them (e.g. device removed) will not.
-                if (++failures >= 50)
+                if (++failures >= MaxConsecutiveRenderFailures)
                 {
                     ReportRenderFailure(ex);
                     return;
                 }
 
-                Thread.Sleep(100);
+                Thread.Sleep(RenderRetryDelayMs);
             }
         }
     }
@@ -96,7 +151,7 @@ internal sealed class CompositorForm : Form
     {
         _running = false;
         // If the render thread is wedged inside Present, leaking beats disposing under it.
-        if (_renderThread is null || _renderThread.Join(5000))
+        if (_renderThread is null || _renderThread.Join(CloseJoinTimeoutMs))
         {
             _compositor?.Dispose();
         }
