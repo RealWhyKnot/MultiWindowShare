@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+---
+
+## v2026.8.19.0 - 2026-08-19
+
 ### Added
 - **ui:** Window previews and mid-share toggling in the picker (9005a75)
 - **capture:** Aspect-aware layout with live add, remove, and resize (b0c61cb)
@@ -12,7 +16,6 @@
 - Bump xunit.runner.visualstudio from 3.0.2 to 4.0.0 (8c98f66)
 
 ### Fixed
-- **release:** Stop the prior-tag probe from failing the notes step (7324bf5)
 - **capture:** Drop helper and shell windows from the picker list (09364f5)
 - **changelog:** Merge appended entries into their existing sections (af874ab)
 
