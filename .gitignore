@@ -1,0 +1,14 @@
+.vs/
+.vscode/
+bin/
+obj/
+[Bb]uild/
+artifacts/
+/release/
+/stage/
+/.local/
+/*.log
+/*.tmp
+version.txt
+*.user
+*.suo
