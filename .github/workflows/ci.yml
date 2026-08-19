@@ -89,6 +89,7 @@ jobs:
           ./.github/scripts/Test-UpdateChangelog.ps1
           ./.github/scripts/Test-GenerateReleaseNotes.ps1
           ./.github/scripts/Test-ReleaseVersionSequence.ps1
+          ./.github/scripts/Test-NightlyBetaPlan.ps1
 
       - name: Restore
         run: dotnet restore MultiWindowShare.slnx
