@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using MultiWindowShare.Core;
 
 namespace MultiWindowShare.Capture;
 
@@ -10,20 +11,23 @@ public readonly record struct CaptureTarget(IntPtr Handle, string Title)
 
 // Lists top-level windows that Windows.Graphics.Capture can actually target: visible, titled, and
 // not cloaked (suspended UWP apps and windows on another virtual desktop are cloaked and have no
-// live surface). Minimized windows are intentionally kept -- they can't be captured while minimized,
-// but the picker should still show them so the user knows to restore them.
+// live surface), then narrows those to the ones worth picking via WindowFilter. Minimized windows
+// are intentionally kept -- they can't be captured while minimized, but the picker should still show
+// them so the user knows to restore them.
 public static class WindowEnumerator
 {
     private const int DwmwaCloaked = 14;
+    private const int GwlExStyle = -20;
 
     // excludeProcessId drops our own windows, which would otherwise let the user capture the
     // compositor output and mirror it into itself.
     public static IReadOnlyList<CaptureTarget> TopLevelWindows(int excludeProcessId = 0)
     {
         var results = new List<CaptureTarget>();
+        IntPtr shell = GetShellWindow();
         EnumWindows((hwnd, _) =>
         {
-            if (IsCapturable(hwnd, excludeProcessId, out string title))
+            if (IsCapturable(hwnd, excludeProcessId, shell, out string title))
             {
                 results.Add(new CaptureTarget(hwnd, title));
             }
@@ -33,7 +37,7 @@ public static class WindowEnumerator
         return results;
     }
 
-    private static bool IsCapturable(IntPtr hwnd, int excludeProcessId, out string title)
+    private static bool IsCapturable(IntPtr hwnd, int excludeProcessId, IntPtr shell, out string title)
     {
         title = string.Empty;
         if (!IsWindowVisible(hwnd))
@@ -55,6 +59,17 @@ public static class WindowEnumerator
             return false;
         }
 
+        GetClientRect(hwnd, out Rect client);
+        if (!WindowFilter.IsShareable(
+            (int)GetWindowLongPtr(hwnd, GwlExStyle),
+            hwnd == shell,
+            IsIconic(hwnd),
+            client.Right - client.Left,
+            client.Bottom - client.Top))
+        {
+            return false;
+        }
+
         int length = GetWindowTextLength(hwnd);
         if (length == 0)
         {
@@ -69,11 +84,32 @@ public static class WindowEnumerator
 
     private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lparam);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
     [DllImport("user32.dll")]
     private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lparam);
 
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetShellWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hwnd, out Rect rect);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
 
     [DllImport("user32.dll")]
     private static extern int GetWindowTextLength(IntPtr hwnd);
