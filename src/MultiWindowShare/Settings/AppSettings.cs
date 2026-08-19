@@ -10,6 +10,15 @@ public sealed class AppSettings
 
     public int CanvasHeight { get; set; } = 1080;
 
+    // Main window geometry; Width 0 means never saved.
+    public int MainWindowX { get; set; }
+
+    public int MainWindowY { get; set; }
+
+    public int MainWindowWidth { get; set; }
+
+    public int MainWindowHeight { get; set; }
+
     private static string Path => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "MultiWindowShare",

@@ -43,12 +43,12 @@ Both steps are in the Sound control panel: `mmsys.cpl`, Playback tab, right-clic
 
 ## Status
 
-The video half works. Picking several windows tiles them into one shared surface, verified against live windows at their real resolutions. The picker and device selection are in place. The audio half is next: per-process capture and mixing exist as tested pieces, and the routing that ties them to the chosen cable is not wired up yet.
+The video half works. Picking several windows tiles them into one shared surface, verified against live windows at their real resolutions. The picker shows a refreshing snapshot of each window, and the selection can change mid-share: toggling a window adds or drops its tile without restarting, closing a shared window frees its tile, and the layout re-packs around every size change. Device selection is in place. The audio half is next: per-process capture and mixing exist as tested pieces, and the routing that ties them to the chosen cable is not wired up yet.
 
 ## Layout
 
 - `src/MultiWindowShare` - the app: window enumeration, capture, the D3D11 grid compositor, audio device listing, and the picker.
-- `src/MultiWindowShare.Core` - logic with no OS dependencies: the mixer, ring buffer, grid layout and fit math, cable detection. Unit-tested.
+- `src/MultiWindowShare.Core` - logic with no OS dependencies: the mixer, ring buffer, aspect-aware grid layout, cable detection. Unit-tested.
 - `spikes/P0EndpointSpike` - the audio measurement described above.
 - `tests/MultiWindowShare.Tests` - xUnit coverage of Core.
 
