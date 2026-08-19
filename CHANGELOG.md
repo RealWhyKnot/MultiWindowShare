@@ -12,6 +12,7 @@
 - Bump xunit.runner.visualstudio from 3.0.2 to 4.0.0 (8c98f66)
 
 ### Fixed
+- **capture:** Drop helper and shell windows from the picker list (09364f5)
 - **changelog:** Merge appended entries into their existing sections (af874ab)
 
 ---
