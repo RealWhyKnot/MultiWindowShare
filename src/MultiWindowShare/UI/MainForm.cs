@@ -1,6 +1,7 @@
 using System.Windows.Forms;
+using MultiWindowShare.App;
 using MultiWindowShare.Audio;
-using MultiWindowShare.Settings;
+using MultiWindowShare.Capture;
 
 namespace MultiWindowShare.UI;
 

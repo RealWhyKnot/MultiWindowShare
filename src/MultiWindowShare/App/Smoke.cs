@@ -2,7 +2,7 @@ using System.Windows.Forms;
 using MultiWindowShare.Capture;
 using MultiWindowShare.UI;
 
-namespace MultiWindowShare;
+namespace MultiWindowShare.App;
 
 // Headless check that the capture and compositing path really runs: builds the D3D11 device, compiles
 // the shaders, captures real windows, presents frames, then exercises runtime add/remove and swap

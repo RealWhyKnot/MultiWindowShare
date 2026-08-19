@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace MultiWindowShare.Settings;
+namespace MultiWindowShare.App;
 
 public sealed class AppSettings
 {

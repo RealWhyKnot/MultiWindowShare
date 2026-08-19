@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace MultiWindowShare;
+namespace MultiWindowShare.Capture;
 
 public readonly record struct CaptureTarget(IntPtr Handle, string Title)
 {

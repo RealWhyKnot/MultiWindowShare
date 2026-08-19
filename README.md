@@ -47,7 +47,7 @@ The video half works. Picking several windows tiles them into one shared surface
 
 ## Layout
 
-- `src/MultiWindowShare` - the app: window enumeration, capture, the D3D11 grid compositor, audio device listing, and the picker.
+- `src/MultiWindowShare` - the app. `Capture/` enumerates windows and drives Windows.Graphics.Capture and the D3D11 grid compositor, `UI/` holds the picker and the two forms, `Audio/` lists playback devices, `App/` covers settings and the `--smoke` check.
 - `src/MultiWindowShare.Core` - logic with no OS dependencies: the mixer, ring buffer, aspect-aware grid layout, cable detection. Unit-tested.
 - `spikes/P0EndpointSpike` - the audio measurement described above.
 - `tests/MultiWindowShare.Tests` - xUnit coverage of Core.

@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using MultiWindowShare.App;
 using MultiWindowShare.Audio;
+using MultiWindowShare.Capture;
 using MultiWindowShare.UI;
 
 namespace MultiWindowShare;
