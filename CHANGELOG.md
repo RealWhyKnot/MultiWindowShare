@@ -12,6 +12,7 @@
 - Bump xunit.runner.visualstudio from 3.0.2 to 4.0.0 (8c98f66)
 
 ### Fixed
+- **release:** Stop the prior-tag probe from failing the notes step (7324bf5)
 - **capture:** Drop helper and shell windows from the picker list (09364f5)
 - **changelog:** Merge appended entries into their existing sections (af874ab)
 
