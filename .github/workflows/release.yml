@@ -52,12 +52,13 @@ jobs:
           ./.github/scripts/Test-WorkflowSyntax.ps1
           ./.github/scripts/Test-UpdateChangelog.ps1
           ./.github/scripts/Test-GenerateReleaseNotes.ps1
-          ./.github/scripts/Test-ReleaseVersionSequence.ps1
           ./.github/scripts/Test-NightlyBetaPlan.ps1
 
       - name: Validate release version sequence
-        shell: pwsh
-        run: ./.github/scripts/Assert-ReleaseVersionSequence.ps1 -Tag '${{ github.ref_name }}'
+        uses: RealWhyKnot/workflows/version-sequence@v1
+        with:
+          tag: '${{ github.ref_name }}'
+          prerelease-suffix: '[A-Za-z0-9][A-Za-z0-9.-]*'
 
       - name: Promote Unreleased to tagged section
         shell: pwsh
