@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release, for example v2026.9.8.0 or v2026.9.8.0-beta'
+        required: true
 
 permissions:
   contents: write
@@ -29,6 +34,7 @@ jobs:
         id: release_tag
         uses: RealWhyKnot/workflows/resolve-tag@v1
         with:
+          tag: ${{ inputs.tag }}
           tag-pattern: '^v\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
           prerelease-pattern: '^v\d{4}\.\d+\.\d+\.\d+-.+$'
 
@@ -56,27 +62,27 @@ jobs:
       - name: Validate release version sequence
         uses: RealWhyKnot/workflows/version-sequence@v1
         with:
-          tag: '${{ github.ref_name }}'
+          tag: '${{ steps.release_tag.outputs.tag }}'
           prerelease-suffix: '[A-Za-z0-9][A-Za-z0-9.-]*'
 
       - name: Promote Unreleased to tagged section
         shell: pwsh
         run: |
-          ./.github/scripts/Update-Changelog.ps1 -Mode Promote -Version '${{ github.ref_name }}'
+          ./.github/scripts/Update-Changelog.ps1 -Mode Promote -Version '${{ steps.release_tag.outputs.tag }}'
           New-Item -ItemType Directory -Force -Path .changelog-stash | Out-Null
           Copy-Item CHANGELOG.md .changelog-stash/CHANGELOG.md -Force
 
       - name: Build release assets
         shell: pwsh
         run: |
-          $version = '${{ github.ref_name }}' -replace '^v', ''
+          $version = '${{ steps.release_tag.outputs.tag }}' -replace '^v', ''
           ./build.ps1 -Version $version -Release
 
       - name: Write integrity manifest
         id: assets
         shell: pwsh
         run: |
-          $tag = '${{ github.ref_name }}'
+          $tag = '${{ steps.release_tag.outputs.tag }}'
           $zip = Get-ChildItem release -File -Filter '*.zip' | Select-Object -First 1
           if (-not $zip) { throw "Expected a zip release asset under release/." }
 
@@ -94,7 +100,7 @@ jobs:
         shell: pwsh
         run: |
           ./.github/scripts/Generate-ReleaseNotes.ps1 `
-            -Tag '${{ github.ref_name }}' `
+            -Tag '${{ steps.release_tag.outputs.tag }}' `
             -Repo '${{ github.repository }}' `
             -ZipName '${{ steps.assets.outputs.zip_name }}' `
             -IntegrityName '${{ steps.assets.outputs.integrity_name }}' |
@@ -106,7 +112,7 @@ jobs:
       - name: Publish GitHub release
         uses: RealWhyKnot/workflows/publish-release@v1
         with:
-          tag: ${{ github.ref_name }}
+          tag: ${{ steps.release_tag.outputs.tag }}
           notes-file: release/notes.md
           prerelease: ${{ steps.release_tag.outputs.prerelease }}
           delete-existing: 'true'
@@ -124,7 +130,7 @@ jobs:
         continue-on-error: true
         uses: RealWhyKnot/workflows/commit-on-branch@v1
         with:
-          headline: 'docs(changelog): promote Unreleased to ${{ github.ref_name }} [skip changelog]'
-          body: 'Promoted after publishing ${{ github.ref_name }}.'
+          headline: 'docs(changelog): promote Unreleased to ${{ steps.release_tag.outputs.tag }} [skip changelog]'
+          body: 'Promoted after publishing ${{ steps.release_tag.outputs.tag }}.'
           paths: |
             CHANGELOG.md
