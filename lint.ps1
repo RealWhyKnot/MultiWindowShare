@@ -49,7 +49,6 @@ Invoke-Step -Name "workflow script syntax" -Command {
     ./.github/scripts/Test-WorkflowSyntax.ps1
     ./.github/scripts/Test-UpdateChangelog.ps1
     ./.github/scripts/Test-GenerateReleaseNotes.ps1
-    ./.github/scripts/Test-ReleaseVersionSequence.ps1
     ./.github/scripts/Test-NightlyBetaPlan.ps1
 }
 

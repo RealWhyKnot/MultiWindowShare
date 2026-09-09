@@ -3,7 +3,7 @@
 ## Stable release
 
 1. Make sure `main` is green.
-2. Create and push a tag shaped like `vYYYY.M.D.N`, where `N` is the next same-day revision. `Assert-ReleaseVersionSequence.ps1` rejects anything else.
+2. Create and push a tag shaped like `vYYYY.M.D.N`, where `N` is the next same-day revision. The shared `version-sequence` action rejects anything else.
 3. `.github/workflows/release.yml` builds the compressed single-file win-x64 zip and the integrity TSV.
 4. The workflow publishes the GitHub release and promotes `CHANGELOG.md` from `Unreleased` to the tag section on `main`.
 
