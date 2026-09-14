@@ -21,3 +21,7 @@ jobs:
       validate-scripts: |
         ./.github/scripts/Test-WorkflowSyntax.ps1
         ./.github/scripts/Test-NightlyBetaPlan.ps1
+      ignore-paths: |
+        lint.ps1
+        test.ps1
+        spikes/**
